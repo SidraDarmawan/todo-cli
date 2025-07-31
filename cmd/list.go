@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
+	"regexp"
+	"strconv"
 
 	"github.com/SidraDarmawan/todo-cli/data"
 	"github.com/SidraDarmawan/todo-cli/prompt"
@@ -12,7 +13,6 @@ import (
 
 var showEverything bool
 
-// listCmd represents the list command
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Show all todo list",
@@ -20,40 +20,72 @@ var listCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		todos := data.ReadAllTodos(showEverything)
 
+		if len(todos) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "No todo items found. Create one using 'todo create'.")
+			return nil
+		}
+
+		items := make([]interface{}, len(todos))
+		for i, t := range todos {
+			items[i] = t
+		}
+
 		templates := promptui.SelectTemplates{
 			Label:    "{{ . }}?",
-			Active:   "🟢 {{ if .Status }} {{ .Title | green }} {{ else }} {{ .Title | red }} {{ end }}",
-			Inactive: "  {{ if .Status }} {{ .Title | green }} {{ else }} {{ .Title | red }} {{ end }}",
-			Selected: "🟢 {{ if .Status }} {{ .Title | green }} {{ else }} {{ .Title | red }} {{ end }}",
+			Active:   "🟢 {{ .ID | printf \"%.0d\" }} {{ if .Status }} {{ .Title | green }} {{ else }} {{ .Title | red }} {{ end }}",
+			Inactive: "  {{ .ID | printf \"%.0d\" }} {{ if .Status }} {{ .Title | green }} {{ else }} {{ .Title | red }} {{ end }}",
+			Selected: "🟢 {{ .ID | printf \"%.0d\" }} {{ if .Status }} {{ .Title | green }} {{ else }} {{ .Title | red }} {{ end }}",
 			Details: `
 ----------- Details -----------
-{{ "Title:" | faint }}  {{ .Title }}
-{{ "Description:" | faint }}  {{ .Description }}
-{{ "Status:" | faint }}  {{ if .Status }} {{ "✅ Done" }} {{ else }} {{ "❌ Work In Progress" }} {{ end }}
+{{ "ID:" | faint }}          {{ .ID }}
+{{ "Title:" | faint }}       {{ .Title }}
+{{ "Description:" | faint }} {{ .Description }}
+{{ "Status:" | faint }}      {{ if .Status }} {{ "✅ Done" }} {{ else }} {{ "❌ Work In Progress" }} {{ end }}
+{{ "Created At:" | faint }}  {{ .CreatedAt }}  
 `,
 		}
 
 		todoSc := prompt.SelectContent{
 			Label:     "Your Todo List",
-			Items:     []interface{}{todos},
+			Items:     items,
 			Templates: &templates,
 		}
-		_, selectedTodo := prompt.PrompSelectContent(&todoSc)
 
-		todoID := fetchTodoID(selectedTodo)
+		_, selectedString := prompt.PrompSelectContent(&todoSc)
 
-		todo := data.FindOneTodo(todoID)
+		re := regexp.MustCompile(`\d+`)
+		idMatch := re.FindString(selectedString)
 
-		var items []string
-
-		if todo.Status {
-			items = []string{"Mark As Not Done", "Delete"}
-		} else {
-			items = []string{"Mark As Done", "Delete"}
+		if idMatch == "" {
+			return fmt.Errorf("failed to extract ID from selected string: %q", selectedString)
 		}
+
+		parsedTodoID, err := strconv.ParseUint(idMatch, 10, 64)
+		if err != nil {
+
+			return fmt.Errorf("failed to parse extracted ID %q: %w", idMatch, err)
+		}
+
+		todo, err := data.FindOneTodo(uint(parsedTodoID))
+		if err != nil {
+			return fmt.Errorf("failed to find todo with ID %d: %w", parsedTodoID, err)
+		}
+
+		var actionItems []string
+		if todo.Status {
+			actionItems = []string{"Mark As Not Done", "Delete"}
+		} else {
+			actionItems = []string{"Mark As Done", "Delete"}
+		}
+
+		actionScItems := make([]interface{}, len(actionItems))
+		for i, item := range actionItems {
+			actionScItems[i] = item
+		}
+
 		actionSc := prompt.SelectContent{
 			Label:     fmt.Sprintf("Choose An Action for %v", todo.Title),
-			Items:     []interface{}{items},
+			Items:     actionScItems,
 			Templates: nil,
 		}
 		_, selectedAction := prompt.PrompSelectContent(&actionSc)
@@ -78,29 +110,14 @@ var listCmd = &cobra.Command{
 			fmt.Fprintln(cmd.OutOrStdout(), "======================")
 			fmt.Fprintln(cmd.OutOrStdout(), "Deleted")
 		default:
-			fmt.Fprintln(cmd.OutOrStdout(), "How the hell does it went here?")
+			fmt.Fprintln(cmd.OutOrStdout(), "An unexpected action was selected.")
 		}
 		return nil
 	},
 }
 
-func fetchTodoID(s string) string {
-	dirtyID := strings.Split(s, " ")[0]
-
-	return dirtyID[2:]
-}
-
 func init() {
 	rootCmd.AddCommand(listCmd)
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// listCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// listCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	listCmd.Flags().BoolVarP(&showEverything, "everything", "e", false, "Show everything including finished TODO.")
 }

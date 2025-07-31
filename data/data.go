@@ -1,6 +1,8 @@
 package data
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"os"
 
@@ -24,7 +26,9 @@ func OpenDatabase() error {
 
 	db, err = gorm.Open(sqlite.Open(config.DBPATH), &gorm.Config{})
 	if err != nil {
-		return err
+
+		log.Printf("Failed to open database at %s: %v", config.DBPATH, err)
+		return fmt.Errorf("failed to open database: %w", err)
 	}
 	return nil
 }
@@ -41,7 +45,7 @@ func MigrateDatabase() {
 func InsertTodo(title string, description string, status bool) {
 	todo := Todo{Title: title, Description: description, Status: status}
 	if err := db.Create(&todo).Error; err != nil {
-		remindInit()
+		remindInit() 
 	}
 }
 
@@ -55,18 +59,26 @@ func ReadAllTodos(everything bool) []Todo {
 		return todos
 	}
 
-	if err := db.Where("status = 0").Find(&todos).Error; err != nil {
+	if err := db.Where("status = ?", false).Find(&todos).Error; err != nil {
 		remindInit()
 	}
 	return todos
 }
 
-func FindOneTodo(todoID string) Todo {
+func FindOneTodo(todoID uint) (Todo, error) {
 	todo := Todo{}
-	if err := db.Where("id = ?", todoID).First(&todo).Error; err != nil {
+	err := db.Where("id = ?", todoID).First(&todo).Error
+	if err != nil {
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+
+			return todo, fmt.Errorf("todo with ID %d not found", todoID)
+		}
+
 		remindInit()
+		return todo, err
 	}
-	return todo
+	return todo, nil
 }
 
 func MarkTodoAsDone(todo *Todo) {
@@ -89,8 +101,8 @@ func DeleteTodo(todo *Todo) {
 
 func remindInit() {
 	log.Fatalln(`
-		==========================
-		Have you ran "todo init"?
-		==========================
-	`)
+        ==========================
+        Have you ran "todo init"?
+        ==========================
+    `)
 }
